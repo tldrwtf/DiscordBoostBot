@@ -670,10 +670,11 @@ export class InteractionHandler {
       return;
     }
 
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     this.repository.markPaid(orderId);
     this.repository.appendAuditLog(orderId, "PAYMENT_CONFIRMED", interaction.user.id);
     await this.syncTicketSummary(interaction.guild!, orderId);
-    await interaction.reply({ flags: MessageFlags.Ephemeral, content: "Payment confirmed. Search Booster is now enabled." });
+    await interaction.editReply("Payment confirmed. Search Booster is now enabled.");
 
     await this.sendAuditLog(`Payment confirmed for ${orderId}`, `${interaction.user.tag} marked the order as paid.`);
   }
@@ -696,6 +697,7 @@ export class InteractionHandler {
       return;
     }
 
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const claimChannel = this.getOrderChannel(interaction.guild!, this.config.claimOrdersChannelId);
     const claimMessage = await claimChannel.send({
       content: `<@&${this.config.serverBoostersRoleId}>`,
@@ -707,7 +709,7 @@ export class InteractionHandler {
     this.repository.markSearchingBooster(orderId, claimMessage.id);
     this.repository.appendAuditLog(orderId, "BOOSTER_SEARCH_POSTED", interaction.user.id, `Claim post ${claimMessage.id}`);
     await this.syncTicketSummary(interaction.guild!, orderId);
-    await interaction.reply({ flags: MessageFlags.Ephemeral, content: `Booster search posted in ${claimChannel}.` });
+    await interaction.editReply(`Booster search posted in ${claimChannel}.`);
 
     await this.sendAuditLog(`Booster search posted for ${orderId}`, `Claim post created in ${claimChannel}.`);
   }
@@ -795,11 +797,9 @@ export class InteractionHandler {
       return;
     }
 
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     await this.saveProofUrl(order, interaction.guild!, proofUrl, new Date().toISOString(), interaction.user.id, "link");
-    await interaction.reply({
-      flags: MessageFlags.Ephemeral,
-      content: "Proof link saved. The ticket summary now shows the backup proof image.",
-    });
+    await interaction.editReply("Proof link saved. The ticket summary now shows the backup proof image.");
   }
 
   private async handleCompleteOrder(interaction: ButtonInteraction): Promise<void> {
@@ -820,14 +820,14 @@ export class InteractionHandler {
       return;
     }
 
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const ticketChannel = this.getOrderChannel(interaction.guild!, order.ticketChannelId);
     const latestAttachment = await this.findLatestProofAttachment(ticketChannel, order, interaction.user.id);
     const selectedProof = this.selectProof(order, latestAttachment);
     if (!selectedProof) {
-      await interaction.reply({
-        flags: MessageFlags.Ephemeral,
-        content: `Upload a proof image as a Discord attachment in this ticket or use Submit Proof Link before completing the order. Supported formats: ${SUPPORTED_PROOF_IMAGE_TYPES}.`,
-      });
+      await interaction.editReply(
+        `Upload a proof image as a Discord attachment in this ticket or use Submit Proof Link before completing the order. Supported formats: ${SUPPORTED_PROOF_IMAGE_TYPES}.`,
+      );
       return;
     }
 
@@ -839,7 +839,7 @@ export class InteractionHandler {
     await completedChannel.send({ embeds: [buildCompletedEmbed(this.config, updatedOrder)] });
 
     await this.syncTicketSummary(interaction.guild!, orderId);
-    await interaction.reply({ flags: MessageFlags.Ephemeral, content: `Order completed and logged in ${completedChannel}.` });
+    await interaction.editReply(`Order completed and logged in ${completedChannel}.`);
 
     await this.sendAuditLog(`Order completed ${orderId}`, `${interaction.user.tag} completed the order with proof.`);
   }
@@ -867,6 +867,7 @@ export class InteractionHandler {
       return;
     }
 
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     this.repository.close(orderId);
     this.repository.appendAuditLog(orderId, "TICKET_CLOSED", interaction.user.id);
     const updatedOrder = this.repository.getById(orderId)!;
@@ -875,7 +876,7 @@ export class InteractionHandler {
     await this.archiveTicketChannel(ticketChannel, updatedOrder, "closed");
 
     await this.syncTicketSummary(interaction.guild!, orderId);
-    await interaction.reply({ flags: MessageFlags.Ephemeral, content: "Ticket closed and archived for staff." });
+    await interaction.editReply("Ticket closed and archived for staff.");
 
     await this.sendAuditLog(`Ticket closed for ${orderId}`, `${interaction.user.tag} closed ${ticketChannel}.`);
   }

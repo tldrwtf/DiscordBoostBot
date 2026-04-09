@@ -66,10 +66,14 @@ client.on("interactionCreate", async (interaction) => {
     console.error(error);
     if (interaction.isRepliable()) {
       const message = error instanceof Error ? error.message : "Something went wrong.";
-      if (interaction.replied || interaction.deferred) {
-        await interaction.followUp({ flags: MessageFlags.Ephemeral, content: message });
-      } else {
-        await interaction.reply({ flags: MessageFlags.Ephemeral, content: message });
+      try {
+        if (interaction.replied || interaction.deferred) {
+          await interaction.followUp({ flags: MessageFlags.Ephemeral, content: message });
+        } else {
+          await interaction.reply({ flags: MessageFlags.Ephemeral, content: message });
+        }
+      } catch (responseError) {
+        console.error("Failed to send interaction error response.", responseError);
       }
     }
   }
