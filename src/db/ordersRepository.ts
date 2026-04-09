@@ -218,6 +218,10 @@ export class OrdersRepository {
       .run({ id, closed_at: new Date().toISOString() });
   }
 
+  public cancel(id: string): void {
+    this.db.prepare("UPDATE orders SET status = 'CANCELLED' WHERE id = @id").run({ id });
+  }
+
   public appendAuditLog(orderId: string, action: string, actorId?: string, details?: string): void {
     this.db
       .prepare(

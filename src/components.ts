@@ -25,9 +25,20 @@ export const CUSTOM_IDS = {
   submitProofLink: "ticket:submit-proof-link",
   proofLinkModal: "ticket:proof-link-modal",
   completeOrder: "ticket:complete",
+  cancelOrder: "ticket:cancel",
+  cancelOrderModal: "ticket:cancel-modal",
   closeTicket: "ticket:close",
   acceptBoost: "claim:accept",
 } as const;
+
+function isOrderCancelable(order: OrderRecord): boolean {
+  return (
+    order.status === "AWAITING_PAYMENT" ||
+    order.status === "PAID" ||
+    order.status === "SEARCHING_BOOSTER" ||
+    order.status === "IN_PROGRESS"
+  );
+}
 
 function serviceOptions(product?: ProductConfig): APISelectMenuOption[] {
   const options: APISelectMenuOption[] = [
@@ -275,10 +286,15 @@ export function buildTicketActionRows(order: OrderRecord): ActionRowBuilder<Butt
         .setStyle(ButtonStyle.Secondary)
         .setDisabled(order.status !== "IN_PROGRESS"),
       new ButtonBuilder()
+        .setCustomId(`${CUSTOM_IDS.cancelOrder}:${order.id}`)
+        .setLabel("Cancel Order")
+        .setStyle(ButtonStyle.Danger)
+        .setDisabled(!isOrderCancelable(order)),
+      new ButtonBuilder()
         .setCustomId(`${CUSTOM_IDS.closeTicket}:${order.id}`)
         .setLabel("Close Ticket")
         .setStyle(ButtonStyle.Danger)
-        .setDisabled(order.status === "CLOSED"),
+        .setDisabled(order.status === "CLOSED" || order.status === "CANCELLED"),
     ),
   ];
 }

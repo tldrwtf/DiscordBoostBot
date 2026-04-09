@@ -276,6 +276,16 @@ Important:
 - Behavior:
   - Starts the order wizard ephemerally with the product preselected
 
+`/cancel-order`
+- Staff-only at runtime
+- Arguments:
+  - `order-id` (required): the order ID shown in the ticket summary
+  - `reason` (optional): staff note stored in audit logs
+- Behavior:
+  - Cancels an active order from anywhere in the guild
+  - Archives the related ticket for staff
+  - Disables the claim post if one exists
+
 ### User Context Menu
 `Manage Order`
 - Staff-only
@@ -400,6 +410,7 @@ Row 1:
 Row 2:
 - `Complete Order`
 - `Submit Proof Link`
+- `Cancel Order`
 - `Close Ticket`
 
 Enablement rules:
@@ -407,14 +418,17 @@ Enablement rules:
 - `Search Booster`: enabled only in `PAID`
 - `Complete Order`: enabled only in `IN_PROGRESS`
 - `Submit Proof Link`: enabled only in `IN_PROGRESS`
-- `Close Ticket`: disabled only once the ticket is already `CLOSED`
+- `Cancel Order`: enabled only in `AWAITING_PAYMENT`, `PAID`, `SEARCHING_BOOSTER`, and `IN_PROGRESS`
+- `Close Ticket`: disabled once the ticket is already `CLOSED` or `CANCELLED`
 
 ## Order State Machine
 The implemented order status flow is:
 
 `AWAITING_PAYMENT -> PAID -> SEARCHING_BOOSTER -> IN_PROGRESS -> COMPLETED -> CLOSED`
 
-There is also a `CANCELLED` status in types and filtering logic, but no current interaction flow writes that status.
+Cancellation is also available from any active state:
+
+`AWAITING_PAYMENT | PAID | SEARCHING_BOOSTER | IN_PROGRESS -> CANCELLED`
 
 ### 1. Awaiting Payment
 Initial state after ticket creation.
@@ -477,7 +491,22 @@ Effects:
 - ticket summary is refreshed
 - audit log entry is written
 
-### 6. Closed
+### 6. Cancelled
+Reached when staff clicks `Cancel Order` in the ticket or runs `/cancel-order`.
+
+Effects:
+- status becomes `CANCELLED`
+- optional reason is stored in the audit log details
+- existing claim post, if present, is updated and disabled
+- customer loses `ViewChannel`, `SendMessages`, and `AttachFiles`
+- assigned booster, if present, also loses `ViewChannel`, `SendMessages`, and `AttachFiles`
+- ticket is renamed with a `cancelled-` prefix if not already prefixed
+- ticket summary is refreshed
+- audit log entry is written
+
+Cancelled tickets are treated as staff-only archives and are excluded from active-order recovery.
+
+### 7. Closed
 Reached when staff clicks `Close Ticket`.
 
 Effects:
@@ -514,8 +543,10 @@ Defined as any member with one of:
 Staff can:
 - deploy product panels
 - use the `Manage Order` context menu
+- use `/cancel-order`
 - confirm payment
 - search for boosters
+- cancel active orders
 - complete any order
 - close tickets
 

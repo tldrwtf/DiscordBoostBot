@@ -38,11 +38,26 @@ import {
 import { canCompleteOrder, isBoosterMember, isStaffMember } from "./permissions.js";
 
 import type { Client, Guild } from "discord.js";
-import type { BotConfig, DraftSelection, NewOrderInput, OrderRecord, ProductConfig, TicketMetadata } from "./types.js";
+import type { BotConfig, DraftSelection, NewOrderInput, OrderRecord, OrderStatus, ProductConfig, TicketMetadata } from "./types.js";
 import type { OrdersRepository } from "./db/ordersRepository.js";
 import type { DraftStore } from "./draftStore.js";
 
 const SUPPORTED_PROOF_IMAGE_TYPES = "PNG, JPG, JPEG, WEBP, or GIF";
+const CANCELABLE_ORDER_STATUSES: ReadonlySet<OrderStatus> = new Set([
+  "AWAITING_PAYMENT",
+  "PAID",
+  "SEARCHING_BOOSTER",
+  "IN_PROGRESS",
+]);
+
+function isCancelableOrderStatus(status: OrderStatus): boolean {
+  return CANCELABLE_ORDER_STATUSES.has(status);
+}
+
+function normalizeOptionalReason(reason: string | null | undefined): string | undefined {
+  const trimmed = reason?.trim();
+  return trimmed ? trimmed : undefined;
+}
 
 export class InteractionHandler {
   constructor(
@@ -87,6 +102,11 @@ export class InteractionHandler {
       return;
     }
 
+    if (interaction.commandName === "cancel-order") {
+      await this.handleCancelOrderCommand(interaction);
+      return;
+    }
+
     if (interaction.commandName === "order") {
       const productId = interaction.options.getString("service", true) as ProductConfig["id"];
       const product = findProduct(CATALOG, productId);
@@ -97,6 +117,7 @@ export class InteractionHandler {
       const draft = this.drafts.reset(interaction.user.id);
       draft.productId = productId;
       await this.replyWithWizard(interaction, draft, "reply");
+      return;
     }
   }
 
@@ -201,6 +222,11 @@ export class InteractionHandler {
       return;
     }
 
+    if (interaction.customId.startsWith(`${CUSTOM_IDS.cancelOrder}:`)) {
+      await this.handleOpenCancelOrderModal(interaction);
+      return;
+    }
+
     if (interaction.customId.startsWith(`${CUSTOM_IDS.closeTicket}:`)) {
       await this.handleCloseTicket(interaction);
       return;
@@ -271,6 +297,11 @@ export class InteractionHandler {
   }
 
   public async handleModal(interaction: ModalSubmitInteraction): Promise<void> {
+    if (interaction.customId.startsWith(`${CUSTOM_IDS.cancelOrderModal}:`)) {
+      await this.handleCancelOrderModal(interaction);
+      return;
+    }
+
     if (interaction.customId.startsWith(`${CUSTOM_IDS.proofLinkModal}:`)) {
       await this.handleProofLinkModal(interaction);
       return;
@@ -328,6 +359,65 @@ export class InteractionHandler {
     });
   }
 
+  private async handleCancelOrderCommand(interaction: ChatInputCommandInteraction): Promise<void> {
+    const member = this.getMember(interaction);
+    if (!isStaffMember(member, this.config)) {
+      await interaction.reply({ flags: MessageFlags.Ephemeral, content: "Only staff can cancel orders." });
+      return;
+    }
+
+    const orderId = interaction.options.getString("order-id", true).trim();
+    const order = this.repository.getById(orderId);
+    if (!order) {
+      await interaction.reply({ flags: MessageFlags.Ephemeral, content: `Order \`${orderId}\` was not found.` });
+      return;
+    }
+
+    const blockedReason = this.getCancellationBlockReason(order);
+    if (blockedReason) {
+      await interaction.reply({ flags: MessageFlags.Ephemeral, content: blockedReason });
+      return;
+    }
+
+    const reason = normalizeOptionalReason(interaction.options.getString("reason"));
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const ticketChannel = await this.cancelOrder(interaction.guild!, order, interaction.user.id, interaction.user.tag, reason);
+    await interaction.editReply(`Order \`${order.id}\` cancelled. Ticket archived for staff in ${ticketChannel}.`);
+  }
+
+  private async handleOpenCancelOrderModal(interaction: ButtonInteraction): Promise<void> {
+    const member = this.getMember(interaction);
+    if (!isStaffMember(member, this.config)) {
+      await interaction.reply({ flags: MessageFlags.Ephemeral, content: "Only staff can cancel orders." });
+      return;
+    }
+
+    const orderId = interaction.customId.split(":")[2];
+    const order = this.repository.getById(orderId);
+    if (!order) {
+      throw new Error("That order no longer exists.");
+    }
+
+    const blockedReason = this.getCancellationBlockReason(order);
+    if (blockedReason) {
+      await interaction.reply({ flags: MessageFlags.Ephemeral, content: blockedReason });
+      return;
+    }
+
+    const modal = new ModalBuilder().setCustomId(`${CUSTOM_IDS.cancelOrderModal}:${orderId}`).setTitle("Cancel Order");
+
+    const reasonInput = new TextInputBuilder()
+      .setCustomId("reason")
+      .setLabel("Cancellation reason")
+      .setStyle(TextInputStyle.Paragraph)
+      .setRequired(false)
+      .setMaxLength(500)
+      .setPlaceholder("Optional note for staff audit logs.");
+
+    modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(reasonInput));
+    await interaction.showModal(modal);
+  }
+
   private async handleOpenProofLinkModal(interaction: ButtonInteraction): Promise<void> {
     const member = this.getMember(interaction);
     const orderId = interaction.customId.split(":")[2];
@@ -360,6 +450,32 @@ export class InteractionHandler {
 
     modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(proofUrlInput));
     await interaction.showModal(modal);
+  }
+
+  private async handleCancelOrderModal(interaction: ModalSubmitInteraction): Promise<void> {
+    const member = this.getMember(interaction);
+    if (!isStaffMember(member, this.config)) {
+      await interaction.reply({ flags: MessageFlags.Ephemeral, content: "Only staff can cancel orders." });
+      return;
+    }
+
+    const orderId = interaction.customId.split(":")[2];
+    const order = this.repository.getById(orderId);
+    if (!order) {
+      await interaction.reply({ flags: MessageFlags.Ephemeral, content: `Order \`${orderId}\` no longer exists.` });
+      return;
+    }
+
+    const blockedReason = this.getCancellationBlockReason(order);
+    if (blockedReason) {
+      await interaction.reply({ flags: MessageFlags.Ephemeral, content: blockedReason });
+      return;
+    }
+
+    const reason = normalizeOptionalReason(interaction.fields.getTextInputValue("reason"));
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const ticketChannel = await this.cancelOrder(interaction.guild!, order, interaction.user.id, interaction.user.tag, reason);
+    await interaction.editReply(`Order \`${order.id}\` cancelled. Ticket archived for staff in ${ticketChannel}.`);
   }
 
   private buildWizardReplyPayload(draft: DraftSelection, product?: ProductConfig) {
@@ -746,33 +862,135 @@ export class InteractionHandler {
       return;
     }
 
+    if (order.status === "CANCELLED") {
+      await interaction.reply({ flags: MessageFlags.Ephemeral, content: "Cancelled orders are already archived for staff." });
+      return;
+    }
+
     this.repository.close(orderId);
     this.repository.appendAuditLog(orderId, "TICKET_CLOSED", interaction.user.id);
     const updatedOrder = this.repository.getById(orderId)!;
     const ticketChannel = this.getOrderChannel(interaction.guild!, updatedOrder.ticketChannelId);
 
-    await ticketChannel.permissionOverwrites.edit(updatedOrder.customerId, {
+    await this.archiveTicketChannel(ticketChannel, updatedOrder, "closed");
+
+    await this.syncTicketSummary(interaction.guild!, orderId);
+    await interaction.reply({ flags: MessageFlags.Ephemeral, content: "Ticket closed and archived for staff." });
+
+    await this.sendAuditLog(`Ticket closed for ${orderId}`, `${interaction.user.tag} closed ${ticketChannel}.`);
+  }
+
+  private getCancellationBlockReason(order: OrderRecord): string | null {
+    if (isCancelableOrderStatus(order.status)) {
+      return null;
+    }
+
+    switch (order.status) {
+      case "COMPLETED":
+        return "Completed orders cannot be cancelled.";
+      case "CLOSED":
+        return "Closed tickets cannot be cancelled.";
+      case "CANCELLED":
+        return "This order is already cancelled.";
+      default:
+        return `Orders in status \`${order.status}\` cannot be cancelled.`;
+    }
+  }
+
+  private formatReason(reason?: string): string {
+    return reason ?? "Not provided.";
+  }
+
+  private buildCancellationDescription(order: OrderRecord, actorUserId: string, reason?: string): string {
+    return [
+      `Order ID: \`${order.id}\``,
+      `Customer: <@${order.customerId}>`,
+      `Cancelled by: <@${actorUserId}>`,
+      `Status: Cancelled`,
+      `Reason: ${this.formatReason(reason)}`,
+    ].join("\n");
+  }
+
+  private async cancelOrder(
+    guild: Guild,
+    order: OrderRecord,
+    actorUserId: string,
+    actorTag: string,
+    reason?: string,
+  ): Promise<TextChannel> {
+    this.repository.cancel(order.id);
+    this.repository.appendAuditLog(order.id, "ORDER_CANCELLED", actorUserId, reason);
+    const updatedOrder = this.repository.getById(order.id)!;
+
+    await this.disableClaimPost(guild, updatedOrder, actorTag, reason);
+
+    const ticketChannel = this.getOrderChannel(guild, updatedOrder.ticketChannelId);
+    await this.archiveTicketChannel(ticketChannel, updatedOrder, "cancelled");
+    await ticketChannel.send({
+      embeds: [buildAuditEmbed(this.config, "Order Cancelled", this.buildCancellationDescription(updatedOrder, actorUserId, reason))],
+    });
+    await this.syncTicketSummary(guild, updatedOrder.id);
+
+    await this.sendAuditLog(
+      `Order cancelled ${updatedOrder.id}`,
+      `${actorTag} cancelled ${ticketChannel}.\nReason: ${this.formatReason(reason)}`,
+    );
+
+    return ticketChannel;
+  }
+
+  private async disableClaimPost(guild: Guild, order: OrderRecord, actorTag: string, reason?: string): Promise<void> {
+    if (!order.claimMessageId) {
+      return;
+    }
+
+    const claimChannel = guild.channels.cache.get(this.config.claimOrdersChannelId);
+    if (!claimChannel || claimChannel.type !== ChannelType.GuildText) {
+      return;
+    }
+
+    const claimMessage = await claimChannel.messages.fetch(order.claimMessageId).catch(() => null);
+    if (!claimMessage) {
+      return;
+    }
+
+    await claimMessage.edit({
+      content: `Order ${order.id} was cancelled by ${actorTag}.`,
+      embeds: [
+        buildAuditEmbed(
+          this.config,
+          "Order Cancelled",
+          `Order ID: \`${order.id}\`\nTicket: <#${order.ticketChannelId}>\nCancelled by: ${actorTag}\nReason: ${this.formatReason(reason)}`,
+        ),
+      ],
+      components: [buildClaimActionRow(order.id, true)],
+    });
+  }
+
+  private async archiveTicketChannel(
+    ticketChannel: TextChannel,
+    order: OrderRecord,
+    prefix: "closed" | "cancelled",
+  ): Promise<void> {
+    await ticketChannel.permissionOverwrites.edit(order.customerId, {
       ViewChannel: false,
       SendMessages: false,
       AttachFiles: false,
     });
 
-    if (updatedOrder.assignedBoosterId) {
-      await ticketChannel.permissionOverwrites.edit(updatedOrder.assignedBoosterId, {
+    if (order.assignedBoosterId) {
+      await ticketChannel.permissionOverwrites.edit(order.assignedBoosterId, {
         ViewChannel: false,
         SendMessages: false,
         AttachFiles: false,
       });
     }
 
-    if (!ticketChannel.name.startsWith("closed-")) {
-      await ticketChannel.setName(`closed-${ticketChannel.name}`.slice(0, 95));
+    const baseName = ticketChannel.name.replace(/^(closed|cancelled)-/, "");
+    const archivedName = `${prefix}-${baseName}`.slice(0, 95);
+    if (ticketChannel.name !== archivedName) {
+      await ticketChannel.setName(archivedName);
     }
-
-    await this.syncTicketSummary(interaction.guild!, orderId);
-    await interaction.reply({ flags: MessageFlags.Ephemeral, content: "Ticket closed and archived for staff." });
-
-    await this.sendAuditLog(`Ticket closed for ${orderId}`, `${interaction.user.tag} closed ${ticketChannel}.`);
   }
 
   public async syncTicketSummary(guild: Guild, orderId: string): Promise<void> {

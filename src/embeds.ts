@@ -113,7 +113,13 @@ function buildOrderSummaryEmbed(
 ): { embed: EmbedBuilder; files: AttachmentBuilder[] } {
   const embed = createBaseEmbed(
     config,
-    order.status === "COMPLETED" ? "success" : order.status === "AWAITING_PAYMENT" ? "warning" : "primary",
+    order.status === "COMPLETED"
+      ? "success"
+      : order.status === "AWAITING_PAYMENT"
+        ? "warning"
+        : order.status === "CANCELLED"
+          ? "danger"
+          : "primary",
   )
     .setTitle(`${order.productLabel} Order`)
     .setDescription(`Order ID: \`${order.id}\``)

@@ -46,6 +46,25 @@ export const commands = [
     .toJSON(),
 
   new SlashCommandBuilder()
+    .setName("cancel-order")
+    .setDescription("Cancel an active order by its ID.")
+    .setContexts(InteractionContextType.Guild)
+    .setIntegrationTypes(ApplicationIntegrationType.GuildInstall)
+    .addStringOption((option) =>
+      option
+        .setName("order-id")
+        .setDescription("The order ID shown in the ticket summary.")
+        .setRequired(true),
+    )
+    .addStringOption((option) =>
+      option
+        .setName("reason")
+        .setDescription("Optional staff note for the cancellation.")
+        .setRequired(false),
+    )
+    .toJSON(),
+
+  new SlashCommandBuilder()
     .setName("order")
     .setDescription("Start a boosting order for a specific service.")
     .setContexts(InteractionContextType.Guild)
