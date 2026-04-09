@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "rootDir": "src",
+    "outDir": "dist",
+    "strict": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true
+  },
+  "include": [
+    "src/index.ts",
+    "src/catalog.ts",
+    "src/commands.ts",
+    "src/components.ts",
+    "src/config.ts",
+    "src/draftStore.ts",
+    "src/embeds.ts",
+    "src/permissions.ts",
+    "src/pricing.ts",
+    "src/types.ts",
+    "src/utils.ts",
+    "src/db/ordersRepository.ts"
+  ]
+}
